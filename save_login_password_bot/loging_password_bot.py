@@ -5,6 +5,7 @@ from aiogram.dispatcher.filters import Text
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from aiogram.contrib.fsm_storage.memory import MemoryStorage
+from save_login_password_bot.bot_db import *
 import os
 
 
@@ -20,6 +21,7 @@ class FSMAdmin(StatesGroup):
     get_login = State()
     get_password = State()
     accept = State()
+    get_info = State()
 
 
     @dp.message_handler(Text(equals='отмена', ignore_case=True), state='*')
@@ -28,7 +30,7 @@ class FSMAdmin(StatesGroup):
         await FSMAdmin.show_info.set()
 
 
-@dp.message_handler(Text(equals='добавить аккаунт', ignore_case=True))
+@dp.message_handler(Text(equals=['добавить аккаунт', 'получить информацию'], ignore_case=True))
 @dp.message_handler(commands='start')
 async def start_mess(message: types.Message, state: FSMContext):
     if message.from_user.id == admin_id:
@@ -40,12 +42,16 @@ async def start_mess(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=FSMAdmin.show_info)
 async def send_info(message: types.Message, state: FSMContext):
-    await bot.send_message(message.from_user.id, 'Введите логин', reply_markup=cancel_button)
-    await FSMAdmin.get_login.set()
+    if message.text == 'получить информацию':
+        await sql_read_info(message=message)
+        await state.finish()
+    else:
+        await bot.send_message(message.from_user.id, 'Введите логин', reply_markup=cancel_button)
+        await FSMAdmin.get_login.set()
 
 
 @dp.message_handler(state=FSMAdmin.get_login)
-async def  get_login(message: types.Message, state: FSMContext):
+async def get_login(message: types.Message, state: FSMContext):
     async with state.proxy() as data:
         data['login'] = message.text
         await FSMAdmin.get_password.set()
@@ -68,12 +74,21 @@ async def  get_login(message: types.Message, state: FSMContext):
 @dp.message_handler(state=FSMAdmin.accept)
 async def accept(message: types.Message, state: FSMContext):
     global login, password, users
-    if message.text == 'Да':
-        users[login] = password
-        print(users)
-    else:
-        await bot.send_message(message.from_user.id, 'Ввод отменен, выберите действие', reply_markup=user_start_kb)
+    try:
+        await sql_add_account(login=login, password=password)
+        await bot.send_message(message.from_user.id, 'Ваши данные успешно сохранены', reply_markup=user_start_kb)
+        await state.finish()
+    except Exception as ex:
+        print(repr(ex))
+        await bot.send_message(message.from_user.id, 'Произошла ошибка, возможно такой логин существует',
+                               reply_markup=user_start_kb)
         await FSMAdmin.show_info.set()
+    # if message.text == 'Да':
+    #     users[login] = password
+    #     print(users)
+    # else:
+    #     await bot.send_message(message.from_user.id, 'Ввод отменен, выберите действие', reply_markup=user_start_kb)
+    #     await FSMAdmin.show_info.set()
 
 
 
@@ -82,7 +97,8 @@ async def accept(message: types.Message, state: FSMContext):
 
 
 """"**************************************   BUTTONS   ****************************************"""
-user_start_kb = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton('Добавить аккаунт'))
+user_start_kb = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton('Добавить аккаунт'))\
+    .add(KeyboardButton('получить информацию'))
 
 cancel_button = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True).add(KeyboardButton('Отмена'))
 
@@ -94,4 +110,6 @@ yes_no_kb = ReplyKeyboardMarkup(resize_keyboard=True, one_time_keyboard=True).ad
 
 if __name__ == '__main__':
     print('bot polling started')
+    sql_start()
     executor.start_polling(dp, skip_updates=True)
+
